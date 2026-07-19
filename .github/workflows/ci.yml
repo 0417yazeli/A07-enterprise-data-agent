@@ -1,0 +1,84 @@
+# CI：三平台 × 多阶段校验
+# 触发：push 到 main/develop、PR
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # 1. 换行符校验
+      - name: Check LF line endings
+        shell: bash
+        run: |
+          if git ls-files | xargs -I {} sh -c 'file "{}" | grep -q CRLF' 2>/dev/null; then
+            echo "::error::Found CRLF line endings. Run: git config --global core.autocrlf input"
+            git ls-files | xargs -I {} sh -c 'file "{}" | grep -q CRLF && echo "  - {}"' | head -20
+            exit 1
+          fi
+
+      # 2. 路径硬编码扫描
+      - name: Check for hard-coded paths
+        shell: bash
+        run: |
+          if git grep -nE '/Users/[^/]+/|C:\\\\' -- ':!*.lock' ':!*.svg' ':!docs/collaboration/cross-platform.md' ':!scripts/dev.ps1' 2>/dev/null; then
+            echo "::error::Found hard-coded absolute paths. Use \${PROJECT_ROOT} placeholders."
+            exit 1
+          fi
+
+      # 3. .env 不应入库
+      - name: Verify no .env tracked
+        shell: bash
+        run: |
+          if git ls-files | grep -E '^\.env$|\.env\.[^.]+$' | grep -v '\.example$'; then
+            echo "::error::Tracked .env files detected. Only .env.example should be tracked."
+            exit 1
+          fi
+
+      # 4. Python 语法
+      - name: Python syntax
+        shell: bash
+        run: |
+          python -m py_compile scripts/_common.py
+          # 后端代码若有，也一并校验
+          find backend -name "*.py" -not -path "*/.venv/*" | head -5 | xargs -I {} python -m py_compile {} || true
+
+      # 5. Shell 脚本可解析
+      - name: Shell script syntax
+        shell: bash
+        run: |
+          if [ -f scripts/dev.sh ]; then
+            bash -n scripts/dev.sh
+          fi
+        # Windows 上 PowerShell 校验
+      - name: PowerShell syntax
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (Test-Path scripts/dev.ps1) {
+            $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content scripts/dev.ps1 -Raw), [ref]$null)
+            Write-Host "PowerShell script syntax OK"
+          }

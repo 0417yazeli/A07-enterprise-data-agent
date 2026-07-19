@@ -126,8 +126,13 @@ class Settings(BaseSettings):
 
     @property
     def seed_dir(self) -> Path:
-        d = self.project_root / "app" / "db" / "seed"
+        d = self.project_root / "backend" / "app" / "db" / "seed"
+        d.mkdir(parents=True, exist_ok=True)
         return d
+
+    @property
+    def init_sql(self) -> Path:
+        return self.project_root / "backend" / "app" / "db" / "init.sql"
 
     # ===== SQL 安全 =====
     sql_max_rows: int = 1000
